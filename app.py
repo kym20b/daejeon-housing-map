@@ -92,6 +92,38 @@ def distance_filter(df: pd.DataFrame, center_lat: float, center_lon: float, radi
     return out.sort_values("거리(m)")
 
 
+def render_paginated_dataframe(df: pd.DataFrame, key_prefix: str, page_size: int = 10) -> None:
+    if df.empty:
+        st.info("조건에 맞는 데이터가 없습니다.")
+        return
+
+    total_rows = len(df)
+    total_pages = max(1, (total_rows + page_size - 1) // page_size)
+    page_key = f"{key_prefix}_page"
+
+    if page_key not in st.session_state:
+        st.session_state[page_key] = 1
+
+    # 데이터 조건 변경으로 총 페이지가 줄어든 경우 보정
+    st.session_state[page_key] = min(max(1, st.session_state[page_key]), total_pages)
+
+    col_prev, col_info, col_next = st.columns([1, 2, 1])
+    with col_prev:
+        if st.button("이전", key=f"{key_prefix}_prev", disabled=st.session_state[page_key] <= 1):
+            st.session_state[page_key] -= 1
+    with col_info:
+        st.markdown(f"<div style='text-align:center;'>페이지 {st.session_state[page_key]} / {total_pages}</div>", unsafe_allow_html=True)
+    with col_next:
+        if st.button("다음", key=f"{key_prefix}_next", disabled=st.session_state[page_key] >= total_pages):
+            st.session_state[page_key] += 1
+
+    page = st.session_state[page_key]
+    start = (page - 1) * page_size
+    end = min(start + page_size, total_rows)
+    st.caption(f"{total_rows:,}개 중 {start + 1:,}-{end:,}번째 표시")
+    st.dataframe(df.iloc[start:end], use_container_width=True, hide_index=True)
+
+
 @st.cache_data(show_spinner=False)
 def load_and_preprocess(hospital_source, daycare_source) -> dict:
     df_hospital = read_csv_safely(hospital_source)
@@ -283,6 +315,7 @@ def main() -> None:
             daycare_upload = st.file_uploader("어린이집 CSV 업로드", type=["csv"], key="daycare_csv")
         apt_name = st.text_input("관심 아파트명", value="")
         radius_m = st.slider("반경 (m)", min_value=300, max_value=3000, value=800, step=100)
+        map_height = st.slider("지도 높이 (모바일 권장 380~480)", min_value=320, max_value=900, value=420, step=20)
         search_clicked = st.button("아파트 검색", type="primary")
         st.markdown("---")
         st.write("카카오 키 상태:", "설정됨" if KAKAO_REST_API_KEY else "미설정")
@@ -365,6 +398,24 @@ def main() -> None:
             f"(병원 {len(near_regular_hospital):,}, 소아과 {len(near_pediatric_hospital):,}, 어린이집 {len(near_daycare):,})"
         )
 
+        tab1, tab2, tab3 = st.tabs(["어린이집", "병원", "소아과"])
+        with tab1:
+            show = near_daycare[
+                ["어린이집명", "거리(m)", "어린이집유형구분", "시군구", "주소", "어린이집전화번호"]
+            ].rename(columns={"어린이집전화번호": "전화번호"})
+            render_paginated_dataframe(show, key_prefix="daycare")
+        with tab2:
+            show = near_regular_hospital[["요양기관명", "거리(m)", "종별코드명", "주소", "전화번호"]].rename(
+                columns={"요양기관명": "병원명", "종별코드명": "구분"}
+            )
+            render_paginated_dataframe(show, key_prefix="hospital")
+        with tab3:
+            show = near_pediatric_hospital[["요양기관명", "거리(m)", "종별코드명", "주소", "전화번호"]].rename(
+                columns={"요양기관명": "소아과명", "종별코드명": "구분"}
+            )
+            render_paginated_dataframe(show, key_prefix="pediatric")
+
+        st.caption("모바일에서 스크롤이 답답하면 지도 높이를 더 낮춰 보세요.")
         m = build_map(
             center_lat=center_lat,
             center_lon=center_lon,
@@ -374,24 +425,7 @@ def main() -> None:
             near_pediatric_hospital=near_pediatric_hospital,
             near_daycare=near_daycare,
         )
-        st_folium(m, width=None, height=700)
-
-        tab1, tab2, tab3 = st.tabs(["어린이집", "병원", "소아과"])
-        with tab1:
-            show = near_daycare[
-                ["어린이집명", "거리(m)", "어린이집유형구분", "시군구", "주소", "어린이집전화번호"]
-            ].rename(columns={"어린이집전화번호": "전화번호"})
-            st.dataframe(show, use_container_width=True, hide_index=True)
-        with tab2:
-            show = near_regular_hospital[["요양기관명", "거리(m)", "종별코드명", "주소", "전화번호"]].rename(
-                columns={"요양기관명": "병원명", "종별코드명": "구분"}
-            )
-            st.dataframe(show, use_container_width=True, hide_index=True)
-        with tab3:
-            show = near_pediatric_hospital[["요양기관명", "거리(m)", "종별코드명", "주소", "전화번호"]].rename(
-                columns={"요양기관명": "소아과명", "종별코드명": "구분"}
-            )
-            st.dataframe(show, use_container_width=True, hide_index=True)
+        st_folium(m, width=None, height=map_height)
     else:
         st.info("좌측에서 아파트명을 입력하고 `아파트 검색`을 눌러 주세요.")
 
