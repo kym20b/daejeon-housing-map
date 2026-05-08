@@ -1,6 +1,7 @@
 import os
 from html import escape
 from io import BytesIO
+from pathlib import Path
 
 import folium
 import numpy as np
@@ -17,8 +18,9 @@ KAKAO_REST_API_KEY = os.getenv("KAKAO_REST_API_KEY", "").strip()
 if not KAKAO_REST_API_KEY:
     KAKAO_REST_API_KEY = st.secrets.get("KAKAO_REST_API_KEY", "").strip()
 
-DEFAULT_HOSPITAL_CSV = r"C:\Users\kym\Desktop\파이썬 연습\병원정보서비스(2026.3.).csv"
-DEFAULT_DAYCARE_CSV = r"C:\Users\kym\Desktop\파이썬 연습\어린이집기본정보조회(정기)-기준일(20260430).csv"
+DATA_DIR = Path("data")
+DEFAULT_HOSPITAL_CSV_NAME = "병원정보서비스(2026.3.).csv"
+DEFAULT_DAYCARE_CSV_NAME = "어린이집기본정보조회(정기)-기준일(20260430).csv"
 
 DAEJEON_LAT_MIN = 36.10
 DAEJEON_LAT_MAX = 36.60
@@ -270,14 +272,15 @@ def main() -> None:
 
     with st.sidebar:
         st.subheader("데이터/검색 설정")
-        hospital_upload = st.file_uploader("병원 CSV 업로드", type=["csv"], key="hospital_csv")
-        daycare_upload = st.file_uploader("어린이집 CSV 업로드", type=["csv"], key="daycare_csv")
-        use_local_path = st.checkbox("로컬 경로 사용 (PC 실행용)", value=False)
-        hospital_csv = ""
-        daycare_csv = ""
-        if use_local_path:
-            hospital_csv = st.text_input("병원 CSV 경로", value=DEFAULT_HOSPITAL_CSV)
-            daycare_csv = st.text_input("어린이집 CSV 경로", value=DEFAULT_DAYCARE_CSV)
+        st.caption("기본값: 저장소의 `data` 폴더 CSV 자동 로딩")
+        st.write(f"- 병원: `data/{DEFAULT_HOSPITAL_CSV_NAME}`")
+        st.write(f"- 어린이집: `data/{DEFAULT_DAYCARE_CSV_NAME}`")
+        use_upload_override = st.checkbox("업로드 파일로 임시 덮어쓰기", value=False)
+        hospital_upload = None
+        daycare_upload = None
+        if use_upload_override:
+            hospital_upload = st.file_uploader("병원 CSV 업로드", type=["csv"], key="hospital_csv")
+            daycare_upload = st.file_uploader("어린이집 CSV 업로드", type=["csv"], key="daycare_csv")
         apt_name = st.text_input("관심 아파트명", value="")
         radius_m = st.slider("반경 (m)", min_value=300, max_value=3000, value=800, step=100)
         search_clicked = st.button("아파트 검색", type="primary")
@@ -286,15 +289,20 @@ def main() -> None:
 
     hospital_source = None
     daycare_source = None
+    hospital_repo_path = DATA_DIR / DEFAULT_HOSPITAL_CSV_NAME
+    daycare_repo_path = DATA_DIR / DEFAULT_DAYCARE_CSV_NAME
 
-    if hospital_upload is not None and daycare_upload is not None:
+    if use_upload_override and hospital_upload is not None and daycare_upload is not None:
         hospital_source = BytesIO(hospital_upload.getvalue())
         daycare_source = BytesIO(daycare_upload.getvalue())
-    elif use_local_path and hospital_csv and daycare_csv:
-        hospital_source = hospital_csv
-        daycare_source = daycare_csv
+    elif hospital_repo_path.exists() and daycare_repo_path.exists():
+        hospital_source = str(hospital_repo_path)
+        daycare_source = str(daycare_repo_path)
     else:
-        st.warning("병원/어린이집 CSV를 업로드하거나 로컬 경로 사용을 선택해 주세요.")
+        st.warning(
+            "기본 데이터 파일이 없습니다. `data` 폴더에 CSV 2개를 넣거나, "
+            "`업로드 파일로 임시 덮어쓰기`를 사용해 주세요."
+        )
         return
 
     try:
