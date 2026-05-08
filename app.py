@@ -1,6 +1,6 @@
 import os
 from html import escape
-from pathlib import Path
+from io import BytesIO
 
 import folium
 import numpy as np
@@ -14,6 +14,8 @@ from streamlit_folium import st_folium
 load_dotenv()
 
 KAKAO_REST_API_KEY = os.getenv("KAKAO_REST_API_KEY", "").strip()
+if not KAKAO_REST_API_KEY:
+    KAKAO_REST_API_KEY = st.secrets.get("KAKAO_REST_API_KEY", "").strip()
 
 DEFAULT_HOSPITAL_CSV = r"C:\Users\kym\Desktop\파이썬 연습\병원정보서비스(2026.3.).csv"
 DEFAULT_DAYCARE_CSV = r"C:\Users\kym\Desktop\파이썬 연습\어린이집기본정보조회(정기)-기준일(20260430).csv"
@@ -25,14 +27,18 @@ DAEJEON_LON_MAX = 127.70
 EARTH_RADIUS_M = 6_371_000
 
 
-def read_csv_safely(file_path: Path) -> pd.DataFrame:
+def read_csv_safely(file_obj_or_path) -> pd.DataFrame:
     encodings = ["utf-8-sig", "utf-8", "cp949", "euc-kr"]
     for enc in encodings:
         try:
-            return pd.read_csv(file_path, encoding=enc, low_memory=False)
+            if isinstance(file_obj_or_path, (str, bytes, os.PathLike)):
+                return pd.read_csv(file_obj_or_path, encoding=enc, low_memory=False)
+            if hasattr(file_obj_or_path, "seek"):
+                file_obj_or_path.seek(0)
+            return pd.read_csv(file_obj_or_path, encoding=enc, low_memory=False)
         except UnicodeDecodeError:
             continue
-    raise ValueError(f"CSV 인코딩을 확인하지 못했습니다: {file_path}")
+    raise ValueError("CSV 인코딩을 확인하지 못했습니다.")
 
 
 def safe_text(value) -> str:
@@ -85,9 +91,9 @@ def distance_filter(df: pd.DataFrame, center_lat: float, center_lon: float, radi
 
 
 @st.cache_data(show_spinner=False)
-def load_and_preprocess(hospital_csv: str, daycare_csv: str) -> dict:
-    df_hospital = read_csv_safely(Path(hospital_csv))
-    df_daycare = read_csv_safely(Path(daycare_csv))
+def load_and_preprocess(hospital_source, daycare_source) -> dict:
+    df_hospital = read_csv_safely(hospital_source)
+    df_daycare = read_csv_safely(daycare_source)
 
     hospital = df_hospital.copy()
     hospital["경도"] = pd.to_numeric(hospital["좌표(X)"], errors="coerce")
@@ -264,20 +270,35 @@ def main() -> None:
 
     with st.sidebar:
         st.subheader("데이터/검색 설정")
-        hospital_csv = st.text_input("병원 CSV 경로", value=DEFAULT_HOSPITAL_CSV)
-        daycare_csv = st.text_input("어린이집 CSV 경로", value=DEFAULT_DAYCARE_CSV)
+        hospital_upload = st.file_uploader("병원 CSV 업로드", type=["csv"], key="hospital_csv")
+        daycare_upload = st.file_uploader("어린이집 CSV 업로드", type=["csv"], key="daycare_csv")
+        use_local_path = st.checkbox("로컬 경로 사용 (PC 실행용)", value=False)
+        hospital_csv = ""
+        daycare_csv = ""
+        if use_local_path:
+            hospital_csv = st.text_input("병원 CSV 경로", value=DEFAULT_HOSPITAL_CSV)
+            daycare_csv = st.text_input("어린이집 CSV 경로", value=DEFAULT_DAYCARE_CSV)
         apt_name = st.text_input("관심 아파트명", value="")
         radius_m = st.slider("반경 (m)", min_value=300, max_value=3000, value=800, step=100)
         search_clicked = st.button("아파트 검색", type="primary")
         st.markdown("---")
         st.write("카카오 키 상태:", "설정됨" if KAKAO_REST_API_KEY else "미설정")
 
-    if not hospital_csv or not daycare_csv:
-        st.warning("CSV 경로를 입력해 주세요.")
+    hospital_source = None
+    daycare_source = None
+
+    if hospital_upload is not None and daycare_upload is not None:
+        hospital_source = BytesIO(hospital_upload.getvalue())
+        daycare_source = BytesIO(daycare_upload.getvalue())
+    elif use_local_path and hospital_csv and daycare_csv:
+        hospital_source = hospital_csv
+        daycare_source = daycare_csv
+    else:
+        st.warning("병원/어린이집 CSV를 업로드하거나 로컬 경로 사용을 선택해 주세요.")
         return
 
     try:
-        data = load_and_preprocess(hospital_csv, daycare_csv)
+        data = load_and_preprocess(hospital_source, daycare_source)
     except Exception as exc:
         st.error(f"데이터 로딩 실패: {exc}")
         return
