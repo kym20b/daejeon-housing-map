@@ -53,12 +53,21 @@ def safe_text(value) -> str:
 
 
 def html_popup(title: str, rows: dict) -> folium.Popup:
-    html = f"<b>{safe_text(title)}</b><br>"
+    html = (
+        "<div style='"
+        "width:min(360px,72vw);"
+        "font-size:clamp(11px,1.6vw,14px);"
+        "line-height:1.35;"
+        "word-break:keep-all;"
+        "'>"
+    )
+    html += f"<b>{safe_text(title)}</b><br>"
     for key, value in rows.items():
         value_text = safe_text(value)
         if value_text:
             html += f"<b>{safe_text(key)}</b>: {value_text}<br>"
-    return folium.Popup(html, max_width=420)
+    html += "</div>"
+    return folium.Popup(html, max_width="100%")
 
 
 def filter_daejeon_bounds(df: pd.DataFrame, lat_col: str = "위도", lon_col: str = "경도") -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -99,25 +108,13 @@ def render_paginated_dataframe(df: pd.DataFrame, key_prefix: str, page_size: int
 
     total_rows = len(df)
     total_pages = max(1, (total_rows + page_size - 1) // page_size)
-    page_key = f"{key_prefix}_page"
 
-    if page_key not in st.session_state:
-        st.session_state[page_key] = 1
-
-    # 데이터 조건 변경으로 총 페이지가 줄어든 경우 보정
-    st.session_state[page_key] = min(max(1, st.session_state[page_key]), total_pages)
-
-    col_prev, col_info, col_next = st.columns([1, 2, 1])
-    with col_prev:
-        if st.button("이전", key=f"{key_prefix}_prev", disabled=st.session_state[page_key] <= 1):
-            st.session_state[page_key] -= 1
-    with col_info:
-        st.markdown(f"<div style='text-align:center;'>페이지 {st.session_state[page_key]} / {total_pages}</div>", unsafe_allow_html=True)
-    with col_next:
-        if st.button("다음", key=f"{key_prefix}_next", disabled=st.session_state[page_key] >= total_pages):
-            st.session_state[page_key] += 1
-
-    page = st.session_state[page_key]
+    page = st.selectbox(
+        "페이지",
+        options=list(range(1, total_pages + 1)),
+        key=f"{key_prefix}_page_select",
+        format_func=lambda p: f"{p} / {total_pages}",
+    )
     start = (page - 1) * page_size
     end = min(start + page_size, total_rows)
     st.caption(f"{total_rows:,}개 중 {start + 1:,}-{end:,}번째 표시")
@@ -184,6 +181,9 @@ def build_map(
     near_daycare: pd.DataFrame,
 ) -> folium.Map:
     m = folium.Map(location=[center_lat, center_lon], zoom_start=14, tiles="OpenStreetMap")
+    folium.map.CustomPane("radius_pane", z_index=200).add_to(m)
+    folium.map.CustomPane("facility_pane", z_index=650).add_to(m)
+    folium.map.CustomPane("home_pane", z_index=700).add_to(m)
 
     hospital_group = folium.FeatureGroup(name=f"병원 ({len(near_regular_hospital):,})", show=True).add_to(m)
     pediatric_group = folium.FeatureGroup(name=f"소아과 ★ ({len(near_pediatric_hospital):,})", show=True).add_to(m)
@@ -199,6 +199,7 @@ def build_map(
             fill_color="blue",
             fill_opacity=0.7,
             weight=1,
+            pane="facility_pane",
             tooltip=f"병원: {safe_text(row.get('요양기관명', ''))} ({row.get('거리(m)', '')}m)",
             popup=html_popup(
                 row.get("요양기관명", ""),
@@ -237,6 +238,8 @@ def build_map(
                     ">★</div>
                 """,
             ),
+            pane="facility_pane",
+            z_index_offset=100,
         ).add_to(pediatric_group)
 
     for _, row in near_daycare.iterrows():
@@ -248,6 +251,7 @@ def build_map(
             fill_color="green",
             fill_opacity=0.7,
             weight=1,
+            pane="facility_pane",
             tooltip=f"어린이집: {safe_text(row.get('어린이집명', ''))} ({row.get('거리(m)', '')}m)",
             popup=html_popup(
                 row.get("어린이집명", ""),
@@ -282,6 +286,8 @@ def build_map(
                 ">H</div>
             """,
         ),
+        pane="home_pane",
+        z_index_offset=300,
     ).add_to(home_group)
 
     folium.Circle(
@@ -289,8 +295,9 @@ def build_map(
         radius=radius_m,
         color="red",
         fill=True,
-        fill_opacity=0.08,
-        popup=f"{safe_text(home_name)} 반경 {radius_m}m",
+        fill_opacity=0.06,
+        pane="radius_pane",
+        interactive=False,
     ).add_to(home_group)
 
     folium.LayerControl(collapsed=False).add_to(m)
